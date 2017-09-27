@@ -6,16 +6,18 @@ import os
 import time
 import datetime
 import data_helpers
+import sys
 from text_cnn import TextCNN
 from tensorflow.contrib import learn
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, train_test_split
+
 
 # Parameters
 # ==================================================
 
 # Data loading params
 tf.flags.DEFINE_float("dev_sample_percentage", .2, "Percentage of the training data to use for validation")
-tf.flags.DEFINE_integer("num_cv_folds", 4, "Number of folds for k-fold cross-validation (default: 4)")
+tf.flags.DEFINE_integer("num_cv_folds", 1, "Number of folds for k-fold cross-validation (default: 4, for holdout set to 1)")
 tf.flags.DEFINE_string("positive_data_file", "./Datasets/reaction_cute.data", "Data source for the positive data.")
 tf.flags.DEFINE_string("negative_data_file", "./Datasets/reaction_cute_neg.data", "Data source for the negative data.")
 
@@ -28,10 +30,10 @@ tf.flags.DEFINE_float("l2_reg_lambda", 0.0, "L2 regularization lambda (default: 
 
 # Training parameters
 tf.flags.DEFINE_integer("batch_size", 64, "Batch Size (default: 64)")
-tf.flags.DEFINE_integer("num_epochs", 1, "Number of training epochs (default: 200)")
-tf.flags.DEFINE_integer("evaluate_every", 100, "Evaluate model on dev set after this many steps (default: 100)")
+tf.flags.DEFINE_integer("num_epochs", 50, "Number of training epochs (default: 200)")
+tf.flags.DEFINE_integer("evaluate_every", 50, "Evaluate model on dev set after this many steps (default: 100)")
 tf.flags.DEFINE_integer("checkpoint_every", 100, "Save model after this many steps (default: 100)")
-tf.flags.DEFINE_integer("num_checkpoints", 3, "Number of checkpoints to store (default: 5)")
+tf.flags.DEFINE_integer("num_checkpoints", 2, "Number of checkpoints to store (default: 5)")
 # Misc Parameters
 tf.flags.DEFINE_boolean("allow_soft_placement", True, "Allow device soft device placement")
 tf.flags.DEFINE_boolean("log_device_placement", False, "Log placement of ops on devices")
@@ -43,11 +45,14 @@ for attr, value in sorted(FLAGS.__flags.items()):
     print("{}={}".format(attr.upper(), value))
 print("")
 
+
 # Training
 # ==================================================
-def start_training(x_train, x_dev, y_train, y_dev, vocab_processor, FLAGS, fold, timestamp):
+def start_training(x_train, x_dev, y_train, y_dev, vocab_processor, FLAGS, timestamp, reaction, fold=None):
     total_steps = ((len(y_train) // FLAGS.batch_size) + 1) * FLAGS.num_epochs
+    
     final_loss, final_accuracy = 0.0, 0.0
+    lowest_loss = sys.maxsize
 
     with tf.Graph().as_default():
         session_conf = tf.ConfigProto(
@@ -81,7 +86,10 @@ def start_training(x_train, x_dev, y_train, y_dev, vocab_processor, FLAGS, fold,
             grad_summaries_merged = tf.summary.merge(grad_summaries)
 
             # Output directory for models and summaries
-            out_dir = os.path.abspath(os.path.join(os.path.curdir, "runs", timestamp)) + "_fold-{:d}".format(fold)
+            if not fold:
+                out_dir = os.path.abspath(os.path.join(os.path.curdir, "runs", timestamp)) + "_{:s}".format(reaction)
+            else:
+                out_dir = os.path.abspath(os.path.join(os.path.curdir, "runs", timestamp)) + "_{:s}_fold-{:d}".format(reaction, fold)
             print("Writing to {}\n".format(out_dir))
 
             # Summaries for loss and accuracy
@@ -104,6 +112,13 @@ def start_training(x_train, x_dev, y_train, y_dev, vocab_processor, FLAGS, fold,
             if not os.path.exists(checkpoint_dir):
                 os.makedirs(checkpoint_dir)
             saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.num_checkpoints)
+
+            # Best model directory
+            best_model_dir = os.path.abspath(os.path.join(out_dir, "best_model_dir"))
+            best_model_prefix = os.path.join(best_model_dir, "model")
+            if not os.path.exists(best_model_dir):
+                os.makedirs(best_model_dir)
+            best_model_saver = tf.train.Saver(tf.global_variables(), max_to_keep=1)
 
             # Write vocabulary
             vocab_processor.save(os.path.join(out_dir, "vocab"))
@@ -153,11 +168,21 @@ def start_training(x_train, x_dev, y_train, y_dev, vocab_processor, FLAGS, fold,
                 current_step = tf.train.global_step(sess, global_step)
                 if current_step % FLAGS.evaluate_every == 0:
                     print("\nEvaluation:")
-                    dev_step(x_dev, y_dev, writer=dev_summary_writer)
-                    print("")
+                    loss, accuracy = dev_step(x_dev, y_dev, writer=dev_summary_writer)
+                    # Save the best model found during training (based on the lowest loss)
+                    if loss < lowest_loss:
+                        lowest_loss = loss
+                        path = best_model_saver.save(sess, best_model_prefix, global_step)
+                        with open(os.path.abspath(os.path.join(out_dir, "final_results.txt")), "a") as f:
+                            f.write("Step {:d}\n".format(current_step))
+                            f.write("  Loss:     {:.6f}\n".format(loss))
+                            f.write("  Accuracy: {:8.4f}%\n".format(accuracy))
+                            f.write("\n")
+                        print("\nSaved best model to {}\n".format(path))
                 if current_step % FLAGS.checkpoint_every == 0:
                     path = saver.save(sess, checkpoint_prefix, global_step=current_step)
                     print("Saved model checkpoint to {}\n".format(path))
+                    print("")
             
             print("\nEvaluation:")
             final_loss, final_accuracy = dev_step(x_dev, y_dev, writer=dev_summary_writer)
@@ -171,67 +196,83 @@ def start_training(x_train, x_dev, y_train, y_dev, vocab_processor, FLAGS, fold,
     return final_loss, final_accuracy
 
 
+reactions = ['cute', 'fail', 'hate', 'lol', 'love', 'omg', 'win', 'wtf']
+for reaction in reactions:
 
-# Data Preparation
-# ==================================================
+    # Dataset loading
+    pos_data_file = "./Datasets/reaction_{:s}.data".format(reaction)
+    neg_data_file = "./Datasets/reaction_{:s}_neg.data".format(reaction)
 
-# Load data
-print("Loading data...")
-x_text, y = data_helpers.load_data_and_labels(FLAGS.positive_data_file, FLAGS.negative_data_file)
+    # Data Preparation
+    # ==================================================
 
-# Build vocabulary
-mean_document_length = np.mean([len(x.split(" ")) for x in x_text])
-stddev_document_length = np.std([len(x.split(" ")) for x in x_text])
-# max_document_length = max([len(x.split(" ")) for x in x_text])
-max_document_length = int(mean_document_length + (2 * stddev_document_length))
-print("Max document length: %d" % max_document_length)
-vocab_processor = learn.preprocessing.VocabularyProcessor(max_document_length)
-x = np.array(list(vocab_processor.fit_transform(x_text)))
-print("Vocabulary Size: {:d}".format(len(vocab_processor.vocabulary_)))
+    # Load data
+    print("Loading data...")
+    x_text, y = data_helpers.load_data_and_labels(pos_data_file, neg_data_file)
 
-# Randomly shuffle data
-np.random.seed(72854)
-shuffle_indices = np.random.permutation(np.arange(len(y)))
-x_shuffled = x[shuffle_indices]
-y_shuffled = y[shuffle_indices]
+    # Build vocabulary
+    mean_document_length = np.mean([len(x.split(" ")) for x in x_text])
+    stddev_document_length = np.std([len(x.split(" ")) for x in x_text])
+    # max_document_length = max([len(x.split(" ")) for x in x_text])
+    max_document_length = int(mean_document_length + (1 * stddev_document_length))
+    print("Max document length: %d" % max_document_length)
+    vocab_processor = learn.preprocessing.VocabularyProcessor(max_document_length)
+    x = np.array(list(vocab_processor.fit_transform(x_text)))
+    print("Vocabulary Size: {:d}".format(len(vocab_processor.vocabulary_)))
 
-# Split train/test set
-dev_sample_index = -1 * int(FLAGS.dev_sample_percentage * float(len(y)))
-x_train, x_test = x_shuffled[:dev_sample_index], x_shuffled[dev_sample_index:]
-y_train, y_test = y_shuffled[:dev_sample_index], y_shuffled[dev_sample_index:]
-print("Vocabulary Size: {:d}".format(len(vocab_processor.vocabulary_)))
-print("Train/Test split: {:d}/{:d}".format(len(y_train), len(y_test)))
+    # Randomly shuffle data
+    np.random.seed(72854)
+    shuffle_indices = np.random.permutation(np.arange(len(y)))
+    x_shuffled = x[shuffle_indices]
+    y_shuffled = y[shuffle_indices]
 
-# input("\nPress any key to start training...")
+    # Split train/test set
+    dev_sample_index = -1 * int(FLAGS.dev_sample_percentage * float(len(y)))
+    x_train, x_test = x_shuffled[:dev_sample_index], x_shuffled[dev_sample_index:]
+    y_train, y_test = y_shuffled[:dev_sample_index], y_shuffled[dev_sample_index:]
+    print("Vocabulary Size: {:d}".format(len(vocab_processor.vocabulary_)))
+    print("Train/Test split: {:d}/{:d}".format(len(y_train), len(y_test)))
 
-n_splits = FLAGS.num_cv_folds
-print()
-print("Starting training on files: ")
-print("Positive: {:s}".format(FLAGS.positive_data_file))
-print("Negative: {:s}".format(FLAGS.negative_data_file))
-print("Number of folds: {:d}".format(n_splits))
-print("Train/Validation for cross-validation: {:d}%/{:d}%".format(100 - (100 // n_splits), (100 // n_splits)))
+    # input("\nPress any key to start training...")
 
-fold = 1
-all_losses, all_accuracies = [], []
-timestamp = str(int(time.time()))
-kf = KFold(n_splits=n_splits)
-for train_index, val_index in kf.split(x_train):
-    print("________________________________________________________________________________")
-    print("Starting training for fold {:d}".format(fold))
+    n_splits = FLAGS.num_cv_folds
     print()
-    cv_x_train, cv_x_val = x_train[train_index], x_train[val_index]
-    cv_y_train, cv_y_val = y_train[train_index], y_train[val_index]
-    loss, accuracy = start_training(cv_x_train, cv_x_val, cv_y_train, cv_y_val, vocab_processor, FLAGS, fold, timestamp)
-    all_losses.append(loss)
-    all_accuracies.append(accuracy)
-    fold += 1
+    print("Starting training on files: ")
+    print("Positive: {:s}".format(pos_data_file))
+    print("Negative: {:s}".format(neg_data_file))
 
-print("________________________________________________________________________________")
-print("Final results:")
-print("Average loss: {:.6f}".format(np.mean(all_losses)))
-print("Average accuracy: {:8.4f}%".format(np.mean(all_accuracies)))
+    all_losses, all_accuracies = [], []
+    timestamp = str(int(time.time()))
 
-print()
-print("Finished training operation")
-print("================================================================================")
+    if n_splits > 1:
+        print("\nUsing {:d}-fold cross-validation".format(n_splits))
+        print("Train/Validation for cross-validation: {:d}%/{:d}%\n".format(100 - (100 // n_splits), (100 // n_splits)))
+        fold = 1
+        kf = KFold(n_splits=n_splits)
+        for train_index, val_index in kf.split(x_train):
+            print("________________________________________________________________________________")
+            print("Starting training for fold {:d}\n".format(fold))
+            print()
+            cv_x_train, cv_x_val = x_train[train_index], x_train[val_index]
+            cv_y_train, cv_y_val = y_train[train_index], y_train[val_index]
+            loss, accuracy = start_training(cv_x_train, cv_x_val, cv_y_train, cv_y_val, vocab_processor, FLAGS, timestamp, reaction, fold)
+            all_losses.append(loss)
+            all_accuracies.append(accuracy)
+            fold += 1
+    else:
+        print("\nUsing holdout validation (train/val/test: 60/20/20)")
+        print("________________________________________________________________________________\n")
+        hold_x_train, hold_x_val, hold_y_train, hold_y_val = train_test_split(x_train, y_train, test_size=0.25, shuffle=False)
+        loss, accuracy = start_training(hold_x_train, hold_x_val, hold_y_train, hold_y_val, vocab_processor, FLAGS, timestamp, reaction)
+        all_losses.append(loss)
+        all_accuracies.append(accuracy)
+
+
+    print("________________________________________________________________________________")
+    print("Final results:")
+    print("Average loss: {:.6f}".format(np.mean(all_losses)))
+    print("Average accuracy: {:8.4f}%".format(np.mean(all_accuracies)))
+
+    print()
+    print("Finished training operation")
+    print("================================================================================")
