@@ -10,6 +10,7 @@ import sys
 from text_cnn import TextCNN
 from tensorflow.contrib import learn
 from sklearn.model_selection import KFold, train_test_split
+import gensim
 
 
 # Parameters
@@ -20,17 +21,18 @@ tf.flags.DEFINE_float("dev_sample_percentage", .2, "Percentage of the training d
 tf.flags.DEFINE_integer("num_cv_folds", 1, "Number of folds for k-fold cross-validation (default: 4, for holdout set to 1)")
 tf.flags.DEFINE_string("positive_data_file", "./Datasets/reaction_cute.data", "Data source for the positive data.")
 tf.flags.DEFINE_string("negative_data_file", "./Datasets/reaction_cute_neg.data", "Data source for the negative data.")
+tf.flags.DEFINE_string("embeddings_file", "./misc/embeddings/pt/NILC-Embeddings/skip_s300.txt", "Word embeddings file (Gensim/word2vec only).")
 
 # Model Hyperparameters
-tf.flags.DEFINE_integer("embedding_dim", 64, "Dimensionality of character embedding (default: 128)")
+tf.flags.DEFINE_integer("embedding_dim", 300, "Dimensionality of character embedding (default: 128)")
 tf.flags.DEFINE_string("filter_sizes", "3,4,5", "Comma-separated filter sizes (default: '3,4,5')")
-tf.flags.DEFINE_integer("num_filters", 64, "Number of filters per filter size (default: 128)")
+tf.flags.DEFINE_integer("num_filters", 128, "Number of filters per filter size (default: 128)")
 tf.flags.DEFINE_float("dropout_keep_prob", 0.5, "Dropout keep probability (default: 0.5)")
 tf.flags.DEFINE_float("l2_reg_lambda", 0.0, "L2 regularization lambda (default: 0.0)")
 
 # Training parameters
 tf.flags.DEFINE_integer("batch_size", 64, "Batch Size (default: 64)")
-tf.flags.DEFINE_integer("num_epochs", 50, "Number of training epochs (default: 200)")
+tf.flags.DEFINE_integer("num_epochs", 60, "Number of training epochs (default: 200)")
 tf.flags.DEFINE_integer("evaluate_every", 50, "Evaluate model on dev set after this many steps (default: 100)")
 tf.flags.DEFINE_integer("checkpoint_every", 100, "Save model after this many steps (default: 100)")
 tf.flags.DEFINE_integer("num_checkpoints", 2, "Number of checkpoints to store (default: 5)")
@@ -48,7 +50,16 @@ print("")
 
 # Training
 # ==================================================
-def start_training(x_train, x_dev, y_train, y_dev, vocab_processor, FLAGS, timestamp, reaction, fold=None):
+def start_training(x_train, x_dev, 
+                   y_train, y_dev, 
+                   x_test, y_test, 
+                   vocab_processor, 
+                   FLAGS, 
+                   timestamp, 
+                   reaction, 
+                   embeddings, 
+                   fold=None):
+
     total_steps = ((len(y_train) // FLAGS.batch_size) + 1) * FLAGS.num_epochs
     
     final_loss, final_accuracy = 0.0, 0.0
@@ -63,6 +74,7 @@ def start_training(x_train, x_dev, y_train, y_dev, vocab_processor, FLAGS, times
             cnn = TextCNN(
                 sequence_length=x_train.shape[1],
                 num_classes=y_train.shape[1],
+                embeddings=embeddings,
                 vocab_size=len(vocab_processor.vocabulary_),
                 embedding_size=FLAGS.embedding_dim,
                 filter_sizes=list(map(int, FLAGS.filter_sizes.split(","))),
@@ -173,10 +185,15 @@ def start_training(x_train, x_dev, y_train, y_dev, vocab_processor, FLAGS, times
                     if loss < lowest_loss:
                         lowest_loss = loss
                         path = best_model_saver.save(sess, best_model_prefix, global_step)
+                        test_loss, test_accuracy = dev_step(x_test, y_test)
                         with open(os.path.abspath(os.path.join(out_dir, "final_results.txt")), "a") as f:
                             f.write("Step {:d}\n".format(current_step))
-                            f.write("  Loss:     {:.6f}\n".format(loss))
-                            f.write("  Accuracy: {:8.4f}%\n".format(accuracy))
+                            f.write("  Validation")
+                            f.write("    Loss:     {:.6f}\n".format(loss))
+                            f.write("    Accuracy: {:8.4f}%\n".format(accuracy * 100))
+                            f.write("  Test")
+                            f.write("    Loss:     {:.6f}\n".format(test_loss))
+                            f.write("    Accuracy: {:8.4f}%\n".format(test_accuracy * 100))
                             f.write("\n")
                         print("\nSaved best model to {}\n".format(path))
                 if current_step % FLAGS.checkpoint_every == 0:
@@ -184,19 +201,37 @@ def start_training(x_train, x_dev, y_train, y_dev, vocab_processor, FLAGS, times
                     print("Saved model checkpoint to {}\n".format(path))
                     print("")
             
-            print("\nEvaluation:")
-            final_loss, final_accuracy = dev_step(x_dev, y_dev, writer=dev_summary_writer)
+            print("")
+            print("Final Results:")
+
+            print("  Validation")
+            final_loss, final_accuracy = dev_step(x_dev, y_dev)
+            print("    Loss:     {:.6f}".format(final_loss))
+            print("    Accuracy: {:8.4f}%".format(final_accuracy * 100))
+
+            print("  Test: ")
+            final_test_loss, final_test_accuracy = dev_step(x_test, y_test)
+            print("    Loss:     {:.6f}".format(final_test_loss))
+            print("    Accuracy: {:8.4f}%".format(final_test_accuracy * 100))
             print("")
 
-            print("Final loss:     {:.6f}".format(final_loss))
-            print("Final accuracy: {:8.4f}%".format(final_accuracy * 100))
-            print("")
-
+            with open(os.path.abspath(os.path.join(out_dir, "final_results.txt")), "a") as f:
+                f.write("\n")
+                f.write("Final Results:\n")
+                f.write("  Validation\n")
+                f.write("    Loss:     {:.6f}\n".format(final_loss))
+                f.write("    Accuracy: {:8.4f}%\n".format(final_accuracy * 100))
+                f.write("  Test\n")
+                f.write("    Loss:     {:.6f}\n".format(final_test_loss))
+                f.write("    Accuracy: {:8.4f}%\n".format(final_test_accuracy * 100))
+                f.write("\n\n")
 
     return final_loss, final_accuracy
 
 
+
 reactions = ['cute', 'fail', 'hate', 'lol', 'love', 'omg', 'win', 'wtf']
+# reactions = ['cute']
 for reaction in reactions:
 
     # Dataset loading
@@ -214,11 +249,32 @@ for reaction in reactions:
     mean_document_length = np.mean([len(x.split(" ")) for x in x_text])
     stddev_document_length = np.std([len(x.split(" ")) for x in x_text])
     # max_document_length = max([len(x.split(" ")) for x in x_text])
-    max_document_length = int(mean_document_length + (1 * stddev_document_length))
+    max_document_length = int(mean_document_length + (2 * stddev_document_length))
     print("Max document length: %d" % max_document_length)
     vocab_processor = learn.preprocessing.VocabularyProcessor(max_document_length)
     x = np.array(list(vocab_processor.fit_transform(x_text)))
     print("Vocabulary Size: {:d}".format(len(vocab_processor.vocabulary_)))
+
+    emb = []
+    embeddings_file = FLAGS.embeddings_file
+    if embeddings_file != "":
+        print("Loading embeddings file ({:s})...".format(embeddings_file))
+        try:
+            pt_embeddings = gensim.models.KeyedVectors.load_word2vec_format(FLAGS.embeddings_file, unicode_errors="ignore")
+        except:
+            print("Error opening embeddings file ({:s})".format(embeddings_file))
+            sys.exit()
+
+        ukn_emb = np.random.uniform(-1.0, 1.0, 300)
+        ukn_emb = ukn_emb.astype(np.float32)
+        for cnt in range(len(vocab_processor.vocabulary_)):
+            w = vocab_processor.vocabulary_.reverse(cnt)
+            try:
+                w_emb = pt_embeddings[w]            
+            except:
+                w_emb = ukn_emb
+            emb.append(w_emb)
+
 
     # Randomly shuffle data
     np.random.seed(72854)
@@ -230,7 +286,6 @@ for reaction in reactions:
     dev_sample_index = -1 * int(FLAGS.dev_sample_percentage * float(len(y)))
     x_train, x_test = x_shuffled[:dev_sample_index], x_shuffled[dev_sample_index:]
     y_train, y_test = y_shuffled[:dev_sample_index], y_shuffled[dev_sample_index:]
-    print("Vocabulary Size: {:d}".format(len(vocab_processor.vocabulary_)))
     print("Train/Test split: {:d}/{:d}".format(len(y_train), len(y_test)))
 
     # input("\nPress any key to start training...")
@@ -255,7 +310,15 @@ for reaction in reactions:
             print()
             cv_x_train, cv_x_val = x_train[train_index], x_train[val_index]
             cv_y_train, cv_y_val = y_train[train_index], y_train[val_index]
-            loss, accuracy = start_training(cv_x_train, cv_x_val, cv_y_train, cv_y_val, vocab_processor, FLAGS, timestamp, reaction, fold)
+            loss, accuracy = start_training(cv_x_train, cv_x_val, 
+                                            cv_y_train, cv_y_val, 
+                                            x_test, y_test, 
+                                            vocab_processor, 
+                                            FLAGS, 
+                                            timestamp, 
+                                            reaction, 
+                                            np.asarray(emb), 
+                                            fold)
             all_losses.append(loss)
             all_accuracies.append(accuracy)
             fold += 1
@@ -263,7 +326,14 @@ for reaction in reactions:
         print("\nUsing holdout validation (train/val/test: 60/20/20)")
         print("________________________________________________________________________________\n")
         hold_x_train, hold_x_val, hold_y_train, hold_y_val = train_test_split(x_train, y_train, test_size=0.25, shuffle=False)
-        loss, accuracy = start_training(hold_x_train, hold_x_val, hold_y_train, hold_y_val, vocab_processor, FLAGS, timestamp, reaction)
+        loss, accuracy = start_training(hold_x_train, hold_x_val, 
+                                        hold_y_train, hold_y_val, 
+                                        x_test, y_test, 
+                                        vocab_processor, 
+                                        FLAGS, 
+                                        timestamp, 
+                                        reaction, 
+                                        np.asarray(emb))
         all_losses.append(loss)
         all_accuracies.append(accuracy)
 
@@ -271,7 +341,7 @@ for reaction in reactions:
     print("________________________________________________________________________________")
     print("Final results:")
     print("Average loss: {:.6f}".format(np.mean(all_losses)))
-    print("Average accuracy: {:8.4f}%".format(np.mean(all_accuracies)))
+    print("Average accuracy: {:8.4f}%".format(np.mean(all_accuracies) * 100))
 
     print()
     print("Finished training operation")
