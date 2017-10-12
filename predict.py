@@ -17,7 +17,7 @@ import gensim
 
 # Eval Parameters
 tf.flags.DEFINE_string("runs_dir", "./runs", "Directory with trained models")
-tf.flags.DEFINE_string("input_text", "Os brasileiros estão amando ver a Chloe coberta de Paçoquita no Instagram.  E ela fez aquela inconfundível cara de Chloe está te julgando..  1. A Chloe menininha americana que ficou famosa na internet pela sua cara de ATA recebeu um brindezão da Paçoquita. 2. E a caixa de comentários foi tomada em uma só voz pelo internauta brasileiro. 3. Se você acha que já viu essa carinha antes é porque provavelmente viu mesmo neste meme. A imagem vem deste vídeo no qual a menininha não acha lá essas coisas o fato de ir para a Disney. 4. Ela também aparece neste vídeo no qual fica repetindo várias vezes “PACOQUITA” que é como ela pronuncia o nome do doce. 5. No ano passado no Instagram da Chloe já havia sido publicado um vídeo dela tentando falar essa palavra em português. Nesse até que ela se sai bem. 6. O histórico com quitutes brasileiros não acaba aí: aqui está a Lily irmãzinha da Chloe curtindo um “Brazilian cheese bread” também conhecido como pão de queijo.", "Input text to be classified")
+tf.flags.DEFINE_string("input_text", "", "Input text to be classified")
 tf.flags.DEFINE_integer("embedding_dim", 300, "Dimensionality of character embedding (default: 128)")
 tf.flags.DEFINE_string("embeddings_file", "./misc/embeddings/pt/NILC-Embeddings/skip_s300.txt", "Word embeddings file (Gensim/word2vec only).")
 
