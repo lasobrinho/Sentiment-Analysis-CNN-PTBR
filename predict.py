@@ -12,16 +12,12 @@ import csv
 import sys
 import gensim
 
-# Parameters
-# ==================================================
 
-# Eval Parameters
 tf.flags.DEFINE_string("runs_dir", "./runs", "Directory with trained models")
 tf.flags.DEFINE_string("input_text", "", "Input text to be classified")
 tf.flags.DEFINE_integer("embedding_dim", 300, "Dimensionality of character embedding (default: 128)")
 tf.flags.DEFINE_string("embeddings_file", "./misc/embeddings/pt/NILC-Embeddings/skip_s300.txt", "Word embeddings file (Gensim/word2vec only).")
 
-# Misc Parameters
 tf.flags.DEFINE_boolean("allow_soft_placement", True, "Allow device soft device placement")
 tf.flags.DEFINE_boolean("log_device_placement", False, "Log placement of ops on devices")
 
@@ -45,11 +41,10 @@ if embeddings_file != "":
         sys.exit()
 
 
-
-print("\nPredicting...\n")
-
 # Prediction
 # ==================================================
+
+print("\nPredicting...\n")
 
 models_dir = os.listdir(FLAGS.runs_dir)
 reaction_probabilities = {}
@@ -58,7 +53,6 @@ for model_dir in models_dir:
     reaction_name = model_dir.split('_')[1]
     checkpoint_file = tf.train.latest_checkpoint(os.path.join(FLAGS.runs_dir, model_dir, 'best_model_dir'))
 
-    # Map data into vocabulary
     vocab_path = os.path.join(FLAGS.runs_dir, model_dir, "vocab")
     vocab_processor = learn.preprocessing.VocabularyProcessor.restore(vocab_path)
     x_test = np.array(list(vocab_processor.transform(x_raw)))

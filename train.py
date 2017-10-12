@@ -13,30 +13,24 @@ from sklearn.model_selection import KFold, train_test_split
 import gensim
 
 
-# Parameters
-# ==================================================
-
-# Data loading params
 tf.flags.DEFINE_float("dev_sample_percentage", .2, "Percentage of the training data to use for validation")
 tf.flags.DEFINE_integer("num_cv_folds", 1, "Number of folds for k-fold cross-validation (default: 4, for holdout set to 1)")
 tf.flags.DEFINE_string("positive_data_file", "./Datasets/reaction_cute.data", "Data source for the positive data.")
 tf.flags.DEFINE_string("negative_data_file", "./Datasets/reaction_cute_neg.data", "Data source for the negative data.")
 tf.flags.DEFINE_string("embeddings_file", "./misc/embeddings/pt/NILC-Embeddings/skip_s300.txt", "Word embeddings file (Gensim/word2vec only).")
 
-# Model Hyperparameters
 tf.flags.DEFINE_integer("embedding_dim", 300, "Dimensionality of character embedding (default: 128)")
 tf.flags.DEFINE_string("filter_sizes", "3,4,5", "Comma-separated filter sizes (default: '3,4,5')")
 tf.flags.DEFINE_integer("num_filters", 128, "Number of filters per filter size (default: 128)")
 tf.flags.DEFINE_float("dropout_keep_prob", 0.5, "Dropout keep probability (default: 0.5)")
 tf.flags.DEFINE_float("l2_reg_lambda", 0.0, "L2 regularization lambda (default: 0.0)")
 
-# Training parameters
 tf.flags.DEFINE_integer("batch_size", 64, "Batch Size (default: 64)")
 tf.flags.DEFINE_integer("num_epochs", 60, "Number of training epochs (default: 200)")
 tf.flags.DEFINE_integer("evaluate_every", 50, "Evaluate model on dev set after this many steps (default: 100)")
 tf.flags.DEFINE_integer("checkpoint_every", 100, "Save model after this many steps (default: 100)")
 tf.flags.DEFINE_integer("num_checkpoints", 2, "Number of checkpoints to store (default: 5)")
-# Misc Parameters
+
 tf.flags.DEFINE_boolean("allow_soft_placement", True, "Allow device soft device placement")
 tf.flags.DEFINE_boolean("log_device_placement", False, "Log placement of ops on devices")
 
@@ -50,6 +44,7 @@ print("")
 
 # Training
 # ==================================================
+
 def start_training(x_train, x_dev, 
                    y_train, y_dev, 
                    x_test, y_test, 
@@ -247,12 +242,12 @@ def start_training(x_train, x_dev,
 
 
 reactions = ['cute', 'fail', 'hate', 'lol', 'love', 'omg', 'win', 'wtf']
-# reactions = ['cute']
 for reaction in reactions:
 
     # Dataset loading
     pos_data_file = "./Datasets/reaction_{:s}.data".format(reaction)
     neg_data_file = "./Datasets/reaction_{:s}_neg.data".format(reaction)
+
 
     # Data Preparation
     # ==================================================
@@ -270,6 +265,10 @@ for reaction in reactions:
     vocab_processor = learn.preprocessing.VocabularyProcessor(max_document_length)
     x = np.array(list(vocab_processor.fit_transform(x_text)))
     print("Vocabulary Size: {:d}".format(len(vocab_processor.vocabulary_)))
+
+
+    # Word Embeddings Preparation
+    # ==================================================
 
     emb = []
     embeddings_file = FLAGS.embeddings_file
