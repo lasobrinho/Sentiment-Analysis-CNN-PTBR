@@ -162,13 +162,13 @@ def start_training(x_train, x_dev,
                   cnn.input_y: y_batch,
                   cnn.dropout_keep_prob: 1.0
                 }
-                step, summaries, loss, accuracy = sess.run(
-                    [global_step, dev_summary_op, cnn.loss, cnn.accuracy],
+                step, summaries, loss, accuracy, predictions = sess.run(
+                    [global_step, dev_summary_op, cnn.loss, cnn.accuracy, cnn.predictions],
                     feed_dict)
                 print("{:5d} ({:.2f}%)   loss: {:.6f}   acc: {:8.4f}%".format(step, (step/total_steps) * 100, loss, accuracy * 100))
                 if writer:
                     writer.add_summary(summaries, step)
-                return loss, accuracy
+                return loss, accuracy, predictions
 
             # Generate batches
             batches = data_helpers.batch_iter(
@@ -180,18 +180,18 @@ def start_training(x_train, x_dev,
                 current_step = tf.train.global_step(sess, global_step)
                 if current_step % FLAGS.evaluate_every == 0:
                     print("\nEvaluation:")
-                    loss, accuracy = dev_step(x_dev, y_dev, writer=dev_summary_writer)
+                    loss, accuracy, _ = dev_step(x_dev, y_dev, writer=dev_summary_writer)
                     # Save the best model found during training (based on the lowest loss)
                     if loss < lowest_loss:
                         lowest_loss = loss
                         path = best_model_saver.save(sess, best_model_prefix, global_step)
-                        test_loss, test_accuracy = dev_step(x_test, y_test)
+                        test_loss, test_accuracy, _ = dev_step(x_test, y_test)
                         with open(os.path.abspath(os.path.join(out_dir, "final_results.txt")), "a") as f:
                             f.write("Step {:d}\n".format(current_step))
-                            f.write("  Validation")
+                            f.write("  Validation\n")
                             f.write("    Loss:     {:.6f}\n".format(loss))
                             f.write("    Accuracy: {:8.4f}%\n".format(accuracy * 100))
-                            f.write("  Test")
+                            f.write("  Test\n")
                             f.write("    Loss:     {:.6f}\n".format(test_loss))
                             f.write("    Accuracy: {:8.4f}%\n".format(test_accuracy * 100))
                             f.write("\n")
@@ -205,14 +205,21 @@ def start_training(x_train, x_dev,
             print("Final Results:")
 
             print("  Validation")
-            final_loss, final_accuracy = dev_step(x_dev, y_dev)
+            final_loss, final_accuracy, final_predictions = dev_step(x_dev, y_dev)
+            confusion_matrix = tf.confusion_matrix(labels=y_dev[:,1], predictions=final_predictions).eval()
             print("    Loss:     {:.6f}".format(final_loss))
             print("    Accuracy: {:8.4f}%".format(final_accuracy * 100))
+            print("    Confusion Matrix:")
+            print(confusion_matrix)
+            print("")
 
             print("  Test: ")
-            final_test_loss, final_test_accuracy = dev_step(x_test, y_test)
+            final_test_loss, final_test_accuracy, final_test_predictions = dev_step(x_test, y_test)
+            test_confusion_matrix = tf.confusion_matrix(labels=y_test[:,1], predictions=final_test_predictions).eval()
             print("    Loss:     {:.6f}".format(final_test_loss))
             print("    Accuracy: {:8.4f}%".format(final_test_accuracy * 100))
+            print("    Confusion Matrix:")
+            print(test_confusion_matrix)
             print("")
 
             with open(os.path.abspath(os.path.join(out_dir, "final_results.txt")), "a") as f:
@@ -221,9 +228,18 @@ def start_training(x_train, x_dev,
                 f.write("  Validation\n")
                 f.write("    Loss:     {:.6f}\n".format(final_loss))
                 f.write("    Accuracy: {:8.4f}%\n".format(final_accuracy * 100))
+                f.write("    Confusion Matrix:\n")
+            with open(os.path.abspath(os.path.join(out_dir, "final_results.txt")), "ab") as f:
+                np.savetxt(f, confusion_matrix, fmt='%i')
+            with open(os.path.abspath(os.path.join(out_dir, "final_results.txt")), "a") as f:
+                f.write("\n")
                 f.write("  Test\n")
                 f.write("    Loss:     {:.6f}\n".format(final_test_loss))
                 f.write("    Accuracy: {:8.4f}%\n".format(final_test_accuracy * 100))
+                f.write("    Confusion Matrix:\n")
+            with open(os.path.abspath(os.path.join(out_dir, "final_results.txt")), "ab") as f:
+                np.savetxt(f, test_confusion_matrix, fmt='%i')
+            with open(os.path.abspath(os.path.join(out_dir, "final_results.txt")), "a") as f:
                 f.write("\n\n")
 
     return final_loss, final_accuracy
@@ -258,7 +274,7 @@ for reaction in reactions:
     emb = []
     embeddings_file = FLAGS.embeddings_file
     if embeddings_file != "":
-        print("Loading embeddings file ({:s})...".format(embeddings_file))
+        print("Loading embeddings file... ({:s})".format(embeddings_file))
         try:
             pt_embeddings = gensim.models.KeyedVectors.load_word2vec_format(FLAGS.embeddings_file, unicode_errors="ignore")
         except:
