@@ -17,7 +17,7 @@ tf.flags.DEFINE_float("dev_sample_percentage", .2, "Percentage of the training d
 tf.flags.DEFINE_integer("num_cv_folds", 1, "Number of folds for k-fold cross-validation (default: 4, for holdout set to 1)")
 tf.flags.DEFINE_string("positive_data_file", "./Datasets/reaction_cute.data", "Data source for the positive data.")
 tf.flags.DEFINE_string("negative_data_file", "./Datasets/reaction_cute_neg.data", "Data source for the negative data.")
-tf.flags.DEFINE_string("embeddings_file", "./misc/embeddings/pt/NILC-Embeddings/skip_s300.txt", "Word embeddings file (Gensim/word2vec only).")
+tf.flags.DEFINE_string("embeddings_file", "", "Word embeddings file (Gensim/word2vec only).")
 
 tf.flags.DEFINE_integer("embedding_dim", 300, "Dimensionality of character embedding (default: 128)")
 tf.flags.DEFINE_string("filter_sizes", "3,4,5", "Comma-separated filter sizes (default: '3,4,5')")
